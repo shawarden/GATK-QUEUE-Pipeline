@@ -1,0 +1,63 @@
+#!/bin/bash
+if [ -z $SCRIPT_PATH ]
+then
+	echo NO script defined!
+	echo please set SCRIPT_PATH env var then re-run base script.
+	exit 1
+fi
+
+START_TIME=$(date +%Y%m%d_%H%M%S)
+
+QUEUE_PATH="/home/clinical_genetics/bin/queue-3.5-0-g36282e4/Queue.jar"
+
+#CPU_THREADS=$(cat /proc/cpuinfo | grep "^processor" | sort -u | wc -l)
+#CPU_CORES=$(cat /proc/cpuinfo | grep "^core id" | sort -u | wc -l)
+CPU_CORES=8
+
+MEM_MAX=$(cat /proc/meminfo | awk '/^MemTotal/{print $2}')
+MEM_FREE=$(cat /proc/meminfo | awk '/^MemFree/{print $2}')
+MEM_CACHED=$(cat /proc/meminfo | awk '/^Cached/{print $2}')
+
+#MEM_PER_THREAD=$((( $MEM_MAX / $CPU_CORES ) / 1024 ))
+#MEM_PER_THREAD=$((( $MEM_PER_THREAD - ($MEM_PER_THREAD % 1024 )) / 1024))
+MEM_PER_THREAD=8
+
+EXIT_RUN=1
+
+#	--run_name ${START_TIME}_${RUN_NAME}
+nice -n 0 java -jar ${QUEUE_PATH} \
+	--script ${SCRIPT_PATH} \
+	--job_runner ParallelShell \
+	--maximumNumberOfJobsToRunConcurrently ${CPU_CORES} \
+	--memory_limit ${MEM_PER_THREAD} \
+	--disableDefaultJavaGCOptimizations \
+	--status_email_to sam.hawarden@otago.ac.nz \
+	--status_email_from sam.hawarden@dsm3735.otago.ac.nz \
+	--log_to_file ${START_TIME}.Log.txt \
+	${*} 2>&1
+
+EXIT_RUN=$!
+
+if [ -e "${START_TIME}.Log.txt" ]
+then
+	cat ${START_TIME}.Log.txt | grep QGraph | grep Failed >> ${START_TIME}.Failures.txt
+	cat ${START_TIME}.Log.txt | grep FAILURE >> ${START_TIME}.Failures.txt
+	cat ${START_TIME}.Log.txt | grep FunctionEdge | grep Done >> ${START_TIME}.Completions.txt
+	
+	for log in $(find . -iname "*.out" -type f -printf '%Ts\t%p\n' | sort -n | cut -f2)
+	do
+		echo "=========================================" >> ${START_TIME}.Output.txt
+		echo "${log}" >> ${START_TIME}.Output.txt
+		echo "=========================================" >> ${START_TIME}.Output.txt
+		cat ${log} >> ${START_TIME}.Output.txt
+		rm ${log}
+		echo >> ${START_TIME}.Output.txt
+	done
+	
+	find . -iname "*.fail" -type f >> ${START_TIME}.Failures.txt
+	
+else
+	echo "No log files found. Run failed!"
+fi
+
+exit $EXIT_RUN
